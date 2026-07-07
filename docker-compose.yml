@@ -1,0 +1,611 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HR Voice Agent Platform — Local Development Stack
+# Full production-parity environment for local development.
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  logging: *default-logging
+  networks:
+    - hr-voice-net
+
+networks:
+  hr-voice-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres-primary-data:
+  postgres-replica1-data:
+  redis-node-1-data:
+  redis-node-2-data:
+  redis-node-3-data:
+  redis-node-4-data:
+  redis-node-5-data:
+  redis-node-6-data:
+  rabbitmq-data:
+  vault-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+
+services:
+
+  # ── PostgreSQL 16 Primary ──────────────────────────────────────────────────
+  postgres:
+    <<: *service-defaults
+    image: postgres:16-alpine
+    container_name: hr-postgres-primary
+    environment:
+      POSTGRES_DB: hrvoice
+      POSTGRES_USER: hrvoice
+      POSTGRES_PASSWORD: ritu123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+      - ./scripts/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrvoice -d hrvoice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: |
+      postgres
+        -c wal_level=replica
+        -c max_wal_senders=3
+        -c max_replication_slots=3
+        -c hot_standby=on
+        -c shared_preload_libraries=pg_stat_statements
+        -c pg_stat_statements.track=all
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=768MB
+        -c work_mem=16MB
+        -c maintenance_work_mem=64MB
+        -c log_statement=mod
+        -c log_duration=on
+        -c log_min_duration_statement=100
+
+  # ── PgBouncer Connection Pooler (disabled — not needed for local dev) ──────
+  # pgbouncer:
+  #   <<: *service-defaults
+  #   image: bitnami/pgbouncer:latest
+  #   container_name: hr-pgbouncer
+  #   environment:
+  #     POSTGRESQL_HOST: postgres
+  #     POSTGRESQL_PORT: "5432"
+  #     POSTGRESQL_USERNAME: hrvoice
+  #     POSTGRESQL_PASSWORD: ritu123
+  #     POSTGRESQL_DATABASE: hrvoice
+  #     PGBOUNCER_POOL_MODE: transaction
+  #     PGBOUNCER_MAX_CLIENT_CONN: "200"
+  #     PGBOUNCER_DEFAULT_POOL_SIZE: "50"
+  #     PGBOUNCER_SERVER_IDLE_TIMEOUT: "600"
+  #     PGBOUNCER_AUTH_TYPE: scram-sha-256
+  #   ports:
+  #     - "6432:6432"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+  # ── Redis Cluster (6 nodes: 3 Master + 3 Replica) ─────────────────────────
+  redis-node-1:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-node-1
+    ports:
+      - "7001:7001"
+      - "17001:17001"
+    volumes:
+      - redis-node-1-data:/data
+      - ./infrastructure/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7001 --cluster-announce-port 7001 --cluster-announce-bus-port 17001 --cluster-announce-ip 172.20.0.11
+    networks:
+      hr-voice-net:
+        ipv4_address: 172.20.0.11
+
+  redis-node-2:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-node-2
+    ports:
+      - "7002:7002"
+      - "17002:17002"
+    volumes:
+      - redis-node-2-data:/data
+      - ./infrastructure/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7002 --cluster-announce-port 7002 --cluster-announce-bus-port 17002 --cluster-announce-ip 172.20.0.12
+    networks:
+      hr-voice-net:
+        ipv4_address: 172.20.0.12
+
+  redis-node-3:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-node-3
+    ports:
+      - "7003:7003"
+      - "17003:17003"
+    volumes:
+      - redis-node-3-data:/data
+      - ./infrastructure/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7003 --cluster-announce-port 7003 --cluster-announce-bus-port 17003 --cluster-announce-ip 172.20.0.13
+    networks:
+      hr-voice-net:
+        ipv4_address: 172.20.0.13
+
+  redis-node-4:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-node-4
+    ports:
+      - "7004:7004"
+      - "17004:17004"
+    volumes:
+      - redis-node-4-data:/data
+      - ./infrastructure/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7004 --cluster-announce-port 7004 --cluster-announce-bus-port 17004 --cluster-announce-ip 172.20.0.14
+    networks:
+      hr-voice-net:
+        ipv4_address: 172.20.0.14
+
+  redis-node-5:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-node-5
+    ports:
+      - "7005:7005"
+      - "17005:17005"
+    volumes:
+      - redis-node-5-data:/data
+      - ./infrastructure/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7005 --cluster-announce-port 7005 --cluster-announce-bus-port 17005 --cluster-announce-ip 172.20.0.15
+    networks:
+      hr-voice-net:
+        ipv4_address: 172.20.0.15
+
+  redis-node-6:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-node-6
+    ports:
+      - "7006:7006"
+      - "17006:17006"
+    volumes:
+      - redis-node-6-data:/data
+      - ./infrastructure/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7006 --cluster-announce-port 7006 --cluster-announce-bus-port 17006 --cluster-announce-ip 172.20.0.16
+    networks:
+      hr-voice-net:
+        ipv4_address: 172.20.0.16
+
+  # Redis Cluster Init (runs once)
+  redis-cluster-init:
+    <<: *service-defaults
+    image: redis:7-alpine
+    container_name: hr-redis-cluster-init
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+    command: >
+      sh -c "sleep 5 &&
+             redis-cli --cluster create
+             172.20.0.11:7001 172.20.0.12:7002 172.20.0.13:7003
+             172.20.0.14:7004 172.20.0.15:7005 172.20.0.16:7006
+             --cluster-replicas 1 --cluster-yes"
+    restart: "no"
+
+  # ── RabbitMQ Cluster ──────────────────────────────────────────────────────
+  rabbitmq:
+    <<: *service-defaults
+    image: rabbitmq:3.13-management-alpine
+    container_name: hr-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: hrvoice
+      RABBITMQ_DEFAULT_PASS: hrvoice_dev_password
+      RABBITMQ_DEFAULT_VHOST: /
+      RABBITMQ_ERLANG_COOKIE: hr-voice-agent-cookie
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./infrastructure/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - ./infrastructure/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── HashiCorp Vault (dev mode) ────────────────────────────────────────────
+  vault:
+    <<: *service-defaults
+    image: hashicorp/vault:1.17.2
+    container_name: hr-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://0.0.0.0:8200
+      VAULT_LOG_LEVEL: INFO
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+      - ./infrastructure/vault:/vault/config
+    cap_add:
+      - IPC_LOCK
+    command: vault server -dev -dev-root-token-id=dev-root-token
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  vault-init:
+    <<: *service-defaults
+    image: hashicorp/vault:1.17.2
+    container_name: hr-vault-init
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: dev-root-token
+    volumes:
+      - ./scripts/vault-init.sh:/vault-init.sh
+    command: sh /vault-init.sh
+    depends_on:
+      vault:
+        condition: service_healthy
+    restart: "no"
+
+  # ── OPA Policy Engine ─────────────────────────────────────────────────────
+  opa:
+    <<: *service-defaults
+    image: openpolicyagent/opa:0.67.1
+    container_name: hr-opa
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./infrastructure/opa/policies:/policies
+    command: run --server --addr :8181 --log-level info /policies
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    <<: *service-defaults
+    image: prom/prometheus:v2.53.1
+    container_name: hr-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/monitoring/prometheus/rules:/etc/prometheus/rules
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:11.1.0
+    container_name: hr-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: hrvoice_dev_grafana
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-worldmap-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Loki (Log Aggregation) ────────────────────────────────────────────────
+  loki:
+    <<: *service-defaults
+    image: grafana/loki:3.1.0
+    container_name: hr-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./infrastructure/monitoring/loki/loki.yml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Tempo (Distributed Tracing) ───────────────────────────────────────────
+  tempo:
+    <<: *service-defaults
+    image: grafana/tempo:2.5.0
+    container_name: hr-tempo
+    user: "0"
+    ports:
+      - "3200:3200"
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    volumes:
+      - ./infrastructure/monitoring/tempo/tempo.yml:/etc/tempo/config.yaml
+      - tempo-data:/tmp/tempo
+    command: -config.file=/etc/tempo/config.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3200/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── OpenTelemetry Collector ───────────────────────────────────────────────
+  otel-collector:
+    <<: *service-defaults
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    container_name: hr-otel-collector
+    ports:
+      - "4319:4317"    # OTLP gRPC (external)
+      - "4320:4318"    # OTLP HTTP (external)
+      - "8888:8888"    # Prometheus metrics (self)
+    volumes:
+      - ./infrastructure/monitoring/otel-collector/config.yaml:/etc/otel/config.yaml
+    command: ["--config=/etc/otel/config.yaml"]
+    depends_on:
+      - tempo
+      - loki
+      - prometheus
+
+  # ── Jaeger ────────────────────────────────────────────────────────────────
+  jaeger:
+    <<: *service-defaults
+    image: jaegertracing/all-in-one:1.59.0
+    container_name: hr-jaeger
+    ports:
+      - "16686:16686"   # UI
+      - "14268:14268"   # Collector HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:16686 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Microservices ──────────────────────────────────────────────────────────
+  voice-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/voice_service/Dockerfile
+    container_name: hr-voice-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: voice-service
+      PORT: "8001"
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - ./services/voice_service:/app/services/voice_service
+      - ./shared:/app/shared
+
+  hr-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/hr_service/Dockerfile
+    container_name: hr-hr-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: hr-service
+      PORT: "8002"
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  interview-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/interview_service/Dockerfile
+    container_name: hr-interview-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: interview-service
+      PORT: "8003"
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  onboarding-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/onboarding_service/Dockerfile
+    container_name: hr-onboarding-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: onboarding-service
+      PORT: "8004"
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  notification-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/notification_service/Dockerfile
+    container_name: hr-notification-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: notification-service
+      PORT: "8005"
+    ports:
+      - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  auth-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/auth_service/Dockerfile
+    container_name: hr-auth-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: auth-service
+      PORT: "8006"
+    ports:
+      - "8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  tenant-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/tenant_service/Dockerfile
+    container_name: hr-tenant-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: tenant-service
+      PORT: "8007"
+    ports:
+      - "8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  analytics-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: services/analytics_service/Dockerfile
+    container_name: hr-analytics-service
+    env_file: .env
+    environment:
+      SERVICE_NAME: analytics-service
+      PORT: "8008"
+    ports:
+      - "8008:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

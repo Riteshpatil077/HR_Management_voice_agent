@@ -1,0 +1,29 @@
+---
+# ============================================================================
+# Voice Service — Kubernetes Service
+# ClusterIP with named ports for Istio ServiceEntry and Prometheus scraping
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: voice-service
+  namespace: hr-voice-agent
+  labels:
+    app: voice-service
+    app.kubernetes.io/part-of: hr-voice-agent
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  selector:
+    app: voice-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

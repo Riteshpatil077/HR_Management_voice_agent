@@ -1,0 +1,139 @@
+{
+  "rabbit_version": "3.13.0",
+  "users": [
+    {
+      "name": "hrvoice",
+      "password_hash": "kI3GkPcIbdVZp0OSlEMw2Z2KY4bVzUE0yXLSi1OPFNS9z3sC",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"],
+      "limits": {}
+    }
+  ],
+  "vhosts": [
+    { "name": "/" }
+  ],
+  "permissions": [
+    {
+      "user": "hrvoice",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "hr.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "hr.dead_letter",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "call.analytics",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "hr.dead_letter",
+        "x-message-ttl": 86400000,
+        "x-max-length": 100000
+      }
+    },
+    {
+      "name": "call.events",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "hr.dead_letter",
+        "x-message-ttl": 86400000
+      }
+    },
+    {
+      "name": "notifications",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "hr.dead_letter",
+        "x-message-ttl": 86400000
+      }
+    },
+    {
+      "name": "onboarding.tasks",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "hr.dead_letter",
+        "x-message-ttl": 86400000
+      }
+    },
+    {
+      "name": "dead_letter",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "call.analytics",
+      "destination_type": "queue",
+      "routing_key": "call.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "call.events",
+      "destination_type": "queue",
+      "routing_key": "call.event.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "notifications",
+      "destination_type": "queue",
+      "routing_key": "notification.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.events",
+      "vhost": "/",
+      "destination": "onboarding.tasks",
+      "destination_type": "queue",
+      "routing_key": "onboarding.#",
+      "arguments": {}
+    },
+    {
+      "source": "hr.dead_letter",
+      "vhost": "/",
+      "destination": "dead_letter",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    }
+  ],
+  "parameters": [],
+  "global_parameters": [],
+  "policies": []
+}

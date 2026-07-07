@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# Prometheus Configuration — HR Voice Agent Platform (Local Dev)
+# =============================================================================
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: development
+    project: hr-voice-agent
+
+rule_files:
+  - /etc/prometheus/rules/*.yaml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  # Voice Service
+  - job_name: voice-service
+    static_configs:
+      - targets: [voice-service:8001]
+    metrics_path: /metrics
+
+  # HR Service
+  - job_name: hr-service
+    static_configs:
+      - targets: [hr-service:8002]
+    metrics_path: /metrics
+
+  # Interview Service
+  - job_name: interview-service
+    static_configs:
+      - targets: [interview-service:8003]
+    metrics_path: /metrics
+
+  # Onboarding Service
+  - job_name: onboarding-service
+    static_configs:
+      - targets: [onboarding-service:8004]
+    metrics_path: /metrics
+
+  # Notification Service
+  - job_name: notification-service
+    static_configs:
+      - targets: [notification-service:8005]
+    metrics_path: /metrics
+
+  # Auth Service
+  - job_name: auth-service
+    static_configs:
+      - targets: [auth-service:8006]
+    metrics_path: /metrics
+
+  # Tenant Service
+  - job_name: tenant-service
+    static_configs:
+      - targets: [tenant-service:8007]
+    metrics_path: /metrics
+
+  # Analytics Service
+  - job_name: analytics-service
+    static_configs:
+      - targets: [analytics-service:8008]
+    metrics_path: /metrics
+
+  # OTel Collector self-metrics
+  - job_name: otel-collector
+    static_configs:
+      - targets: [otel-collector:8888]
+
+  # RabbitMQ
+  - job_name: rabbitmq
+    static_configs:
+      - targets: [rabbitmq:15692]
+
+  # PostgreSQL (via postgres_exporter if available)
+  # - job_name: postgres
+  #   static_configs:
+  #     - targets: [postgres-exporter:9187]

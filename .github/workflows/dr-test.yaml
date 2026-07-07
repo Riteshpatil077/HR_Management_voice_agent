@@ -1,0 +1,132 @@
+name: DR Failover Test
+
+on:
+  schedule:
+    # Monthly DR drill — first Saturday of every month at 01:00 UTC
+    - cron: "0 1 1-7 * 6"
+  workflow_dispatch:
+    inputs:
+      failover_region:
+        description: "Failover target region"
+        required: true
+        default: "ap-southeast-1"
+        type: choice
+        options:
+          - ap-southeast-1
+          - us-east-1
+
+env:
+  PRIMARY_REGION: ap-south-1
+  PRIMARY_CLUSTER: hr-voice-agent-production
+  NAMESPACE: hr-voice-agent
+
+jobs:
+  dr-failover-test:
+    name: DR Failover — ${{ github.event.inputs.failover_region || 'ap-southeast-1' }}
+    runs-on: ubuntu-latest
+    environment: production-dr
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PRODUCTION_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.PRIMARY_REGION }}
+
+      - name: Set failover region
+        id: target
+        run: |
+          REGION="${{ github.event.inputs.failover_region || 'ap-southeast-1' }}"
+          echo "region=${REGION}" >> $GITHUB_OUTPUT
+          echo "cluster=hr-voice-agent-dr-${REGION}" >> $GITHUB_OUTPUT
+
+      - name: Capture RTO start time
+        id: rto_start
+        run: echo "start=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Verify Aurora Global Database replica lag
+        run: |
+          LAG=$(aws rds describe-global-clusters \
+            --query "GlobalClusters[?GlobalClusterIdentifier=='hr-voice-agent-global'].GlobalClusterMembers[?IsWriter==\`false\`].Status" \
+            --output text)
+          echo "Replica status: ${LAG}"
+          # Check lag is < 1 second for safe failover
+          REPLICA_LAG=$(aws cloudwatch get-metric-statistics \
+            --namespace AWS/RDS \
+            --metric-name AuroraGlobalDBReplicationLag \
+            --period 60 \
+            --statistics Average \
+            --query 'Datapoints[0].Average' \
+            --output text)
+          echo "Replication lag: ${REPLICA_LAG}ms"
+
+      - name: Promote Aurora read replica in DR region
+        run: |
+          chmod +x scripts/dr_failover_test.sh
+          ./scripts/dr_failover_test.sh \
+            --action promote-replica \
+            --region ${{ steps.target.outputs.region }}
+
+      - name: Update kubeconfig for DR cluster
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ steps.target.outputs.region }} \
+            --name ${{ steps.target.outputs.cluster }}
+
+      - name: Scale up DR cluster workloads
+        run: |
+          for svc in voice-service hr-service interview-service onboarding-service; do
+            kubectl scale deployment/$svc \
+              -n ${{ env.NAMESPACE }} \
+              --replicas=3
+            kubectl rollout status deployment/$svc \
+              -n ${{ env.NAMESPACE }} \
+              --timeout=10m
+          done
+
+      - name: Update Route53 DNS to DR region
+        run: |
+          ./scripts/dr_failover_test.sh \
+            --action switch-dns \
+            --region ${{ steps.target.outputs.region }}
+
+      - name: Measure RTO
+        id: rto
+        run: |
+          END=$(date +%s)
+          RTO=$((END - ${{ steps.rto_start.outputs.start }}))
+          echo "rto_seconds=${RTO}" >> $GITHUB_OUTPUT
+          echo "✅ RTO: ${RTO} seconds (target: < 300s)"
+          if [ $RTO -gt 300 ]; then
+            echo "::error::RTO of ${RTO}s exceeds 5-minute SLA target!"
+            exit 1
+          fi
+
+      - name: Run smoke tests against DR endpoint
+        run: |
+          ./scripts/smoke_test.sh https://dr.api.yourdomain.com
+        env:
+          SMOKE_TEST_JWT: ${{ secrets.PRODUCTION_SMOKE_TEST_JWT }}
+
+      - name: Restore primary (fail back)
+        if: always()
+        run: |
+          ./scripts/dr_failover_test.sh \
+            --action restore-primary \
+            --region ${{ env.PRIMARY_REGION }}
+
+      - name: Post DR test report to Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '🚨' }} DR Failover Test: RTO=${{ steps.rto.outputs.rto_seconds }}s | Target: ${{ steps.target.outputs.region }} | Status: ${{ job.status }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}

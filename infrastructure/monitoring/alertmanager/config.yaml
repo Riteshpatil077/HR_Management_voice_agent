@@ -1,0 +1,88 @@
+---
+# ============================================================================
+# AlertManager Configuration
+# Routes alerts to PagerDuty (critical), Slack (warning), email (all)
+# ============================================================================
+global:
+  resolve_timeout: 5m
+  pagerduty_url: "https://events.pagerduty.com/v2/enqueue"
+  slack_api_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'default-receiver'
+  routes:
+    # Critical alerts → PagerDuty
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+    # Warning alerts → Slack #platform-alerts
+    - match:
+        severity: warning
+      receiver: 'slack-warning'
+      group_wait: 30s
+      repeat_interval: 4h
+
+    # LLM cost alerts → dedicated Slack channel + email
+    - match_re:
+        alertname: '^LLM.*Cost.*'
+      receiver: 'llm-cost-alerts'
+      repeat_interval: 6h
+
+inhibit_rules:
+  # If critical is firing for a service, suppress warnings
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname', 'service']
+
+receivers:
+  - name: 'default-receiver'
+    slack_configs:
+      - channel: '#platform-alerts'
+        title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
+        text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - routing_key: "${PAGERDUTY_INTEGRATION_KEY}"
+        description: '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+        severity: critical
+        client: 'HR Voice Agent Platform'
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+          environment: "{{ .CommonLabels.environment }}"
+    slack_configs:
+      - channel: '#incidents'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ .Annotations.runbook_url }}\n{{ end }}"
+
+  - name: 'slack-warning'
+    slack_configs:
+      - channel: '#platform-alerts'
+        title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
+        text: "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+
+  - name: 'llm-cost-alerts'
+    slack_configs:
+      - channel: '#llm-cost-tracking'
+        title: '💰 LLM Cost Alert: {{ .GroupLabels.alertname }}'
+        text: "{{ range .Alerts }}Tenant: {{ .Labels.tenant_id }}\n{{ .Annotations.description }}\n{{ end }}"
+    email_configs:
+      - to: 'platform-engineering@yourcompany.com'
+        from: 'alerts@yourcompany.com'
+        smarthost: 'smtp.yourcompany.com:587'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        subject: '[HR Voice Agent] LLM Cost Alert'

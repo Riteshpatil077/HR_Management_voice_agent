@@ -1,0 +1,175 @@
+name: Chaos Engineering
+
+on:
+  schedule:
+    # Run weekly on Wednesdays at 03:00 UTC (off-peak for IST staging)
+    - cron: "0 3 * * 3"
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Chaos scenario to run"
+        required: true
+        type: choice
+        options:
+          - pod-kill-voice-service
+          - pod-kill-hr-service
+          - network-partition
+          - cpu-stress-voice
+          - memory-pressure
+          - rds-failover-simulation
+          - rabbitmq-partition
+          - all
+
+env:
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER: hr-voice-agent-staging
+  NAMESPACE: hr-voice-agent
+
+jobs:
+  chaos-test:
+    name: Chaos Engineering — ${{ github.event.inputs.scenario || 'all' }}
+    runs-on: ubuntu-latest
+    environment: staging-chaos
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STAGING_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER }}
+
+      - name: Install Chaos Mesh CLI
+        run: |
+          curl -sSL https://mirrors.chaos-mesh.org/v2.6.3/install.sh | bash
+
+      - name: Capture baseline metrics
+        id: baseline
+        run: |
+          chmod +x scripts/chaos_test.sh
+          ./scripts/chaos_test.sh --capture-baseline
+        env:
+          PROMETHEUS_URL: ${{ secrets.STAGING_PROMETHEUS_URL }}
+
+      - name: Run Chaos Scenario — Pod Kill (Voice Service)
+        if: |
+          github.event.inputs.scenario == 'pod-kill-voice-service' ||
+          github.event.inputs.scenario == 'all' || 
+          github.event_name == 'schedule'
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: chaos-mesh.org/v1alpha1
+          kind: PodChaos
+          metadata:
+            name: pod-kill-voice-service
+            namespace: ${{ env.NAMESPACE }}
+          spec:
+            action: pod-kill
+            mode: one
+            selector:
+              namespaces: [${{ env.NAMESPACE }}]
+              labelSelectors:
+                app: voice-service
+            scheduler:
+              cron: "@once"
+          EOF
+          sleep 30
+          kubectl delete podchaos pod-kill-voice-service -n ${{ env.NAMESPACE }} || true
+
+      - name: Run Chaos Scenario — Network Partition
+        if: |
+          github.event.inputs.scenario == 'network-partition' ||
+          github.event.inputs.scenario == 'all'
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: chaos-mesh.org/v1alpha1
+          kind: NetworkChaos
+          metadata:
+            name: network-partition-voice
+            namespace: ${{ env.NAMESPACE }}
+          spec:
+            action: partition
+            mode: all
+            selector:
+              namespaces: [${{ env.NAMESPACE }}]
+              labelSelectors:
+                app: voice-service
+            direction: both
+            target:
+              selector:
+                namespaces: [${{ env.NAMESPACE }}]
+                labelSelectors:
+                  app: postgres
+            mode: all
+            duration: 60s
+          EOF
+          sleep 90
+          kubectl delete networkchaos network-partition-voice -n ${{ env.NAMESPACE }} || true
+
+      - name: Run Chaos Scenario — CPU Stress
+        if: |
+          github.event.inputs.scenario == 'cpu-stress-voice' ||
+          github.event.inputs.scenario == 'all'
+        run: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: chaos-mesh.org/v1alpha1
+          kind: StressChaos
+          metadata:
+            name: cpu-stress-voice
+            namespace: ${{ env.NAMESPACE }}
+          spec:
+            mode: one
+            selector:
+              namespaces: [${{ env.NAMESPACE }}]
+              labelSelectors:
+                app: voice-service
+            stressors:
+              cpu:
+                workers: 4
+                load: 80
+            duration: 120s
+          EOF
+          sleep 150
+          kubectl delete stresschaos cpu-stress-voice -n ${{ env.NAMESPACE }} || true
+
+      - name: Verify system recovered
+        run: |
+          sleep 30
+          for svc in voice-service hr-service; do
+            kubectl rollout status deployment/$svc -n ${{ env.NAMESPACE }} --timeout=5m
+          done
+          ./scripts/smoke_test.sh https://staging.api.yourdomain.com
+        env:
+          SMOKE_TEST_JWT: ${{ secrets.STAGING_SMOKE_TEST_JWT }}
+
+      - name: Validate SLO after chaos
+        run: ./scripts/chaos_test.sh --validate-slo
+        env:
+          PROMETHEUS_URL: ${{ secrets.STAGING_PROMETHEUS_URL }}
+
+      - name: Upload chaos report
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report-${{ github.run_id }}
+          path: chaos-report.json
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '🚨' }} Chaos test (${{ github.event.inputs.scenario || 'all' }}): ${{ job.status }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}

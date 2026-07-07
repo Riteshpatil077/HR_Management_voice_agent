@@ -1,0 +1,113 @@
+openapi: 3.1.0
+info:
+  title: Ultimate Enterprise HR Voice Agent API
+  description: Core API specifications for the HR Voice Agent microservices platform.
+  version: 3.0.0
+servers:
+  - url: https://api.yourdomain.com
+    description: Production Cluster
+  - url: https://staging.api.yourdomain.com
+    description: Staging Cluster
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/voice/stream:
+    post:
+      summary: Initiate Voice Stream
+      description: Returns a WebSocket URL to begin a full-duplex voice conversation with the agent.
+      operationId: initiateVoiceStream
+      tags:
+        - Voice
+      responses:
+        '200':
+          description: WebSocket URL generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ws_url:
+                    type: string
+                    format: uri
+                  session_id:
+                    type: string
+                    format: uuid
+        '401':
+          description: Unauthorized
+        '429':
+          description: Too Many Requests (Rate limited by Kong)
+
+  /v1/interviews/schedule:
+    post:
+      summary: Schedule Interview
+      description: Schedules a new technical interview and emits a domain event.
+      operationId: scheduleInterview
+      tags:
+        - Interview
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          schema:
+            type: string
+          required: true
+          description: Unique key for idempotent processing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - candidate_name
+                - candidate_email
+                - role
+              properties:
+                candidate_name:
+                  type: string
+                candidate_email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+      responses:
+        '200':
+          description: Interview scheduled
+        '409':
+          description: Conflict (Idempotency key already in flight)
+
+  /v1/onboarding/plans:
+    post:
+      summary: Create Onboarding Plan
+      description: Generates a new onboarding plan based on department templates.
+      operationId: createOnboardingPlan
+      tags:
+        - Onboarding
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          schema:
+            type: string
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                employee_id:
+                  type: string
+                department_id:
+                  type: string
+      responses:
+        '200':
+          description: Plan created

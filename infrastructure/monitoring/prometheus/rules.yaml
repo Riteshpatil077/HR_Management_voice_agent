@@ -1,0 +1,137 @@
+---
+# ============================================================================
+# Prometheus Alerting Rules — HR Voice Agent Platform
+# Covers: SLO burn rate, error rate, LLM cost, latency, queue depth
+# ============================================================================
+groups:
+  # ── SLO: Availability ────────────────────────────────────────────────────────
+  - name: slo.availability
+    rules:
+      - alert: VoiceServiceHighErrorRate
+        expr: |
+          sum(rate(http_request_duration_seconds_count{service="voice-service", status=~"5.."}[5m]))
+          /
+          sum(rate(http_request_duration_seconds_count{service="voice-service"}[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Voice Service error rate above 1% SLO"
+          description: "Voice Service error rate is {{ $value | humanizePercentage }}. Investigate immediately."
+          runbook_url: "https://wiki.yourcompany.com/runbooks/voice-service-high-error-rate"
+
+      - alert: SLOBudgetBurnRateFast
+        expr: |
+          (
+            sum(rate(http_request_duration_seconds_count{service=~"voice-service|hr-service", status=~"5.."}[1h]))
+            /
+            sum(rate(http_request_duration_seconds_count{service=~"voice-service|hr-service"}[1h]))
+          ) > 14.4 * 0.001
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Fast SLO budget burn rate detected"
+          description: "Error budget burning at {{ $value }}x. At this rate, monthly budget exhausted in hours."
+
+  # ── Latency ──────────────────────────────────────────────────────────────────
+  - name: latency
+    rules:
+      - alert: VoiceServiceHighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{service="voice-service"}[5m]))
+            by (le)
+          ) > 3.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Voice Service P99 latency above 3s"
+          description: "P99 latency is {{ $value }}s, check LLM provider and STT response times."
+
+      - alert: LLMResponseTimeHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_request_duration_seconds_bucket{}[5m]))
+            by (le, provider)
+          ) > 5.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM response time high for {{ $labels.provider }}"
+          description: "P95 LLM response time is {{ $value }}s from provider {{ $labels.provider }}."
+
+  # ── LLM Cost ─────────────────────────────────────────────────────────────────
+  - name: llm.cost
+    rules:
+      - alert: LLMHourlyCostExceeded
+        expr: |
+          sum(increase(llm_cost_usd_total{}[1h])) by (tenant_id) > 50
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM hourly cost spike for tenant {{ $labels.tenant_id }}"
+          description: "Tenant {{ $labels.tenant_id }} spent ${{ $value }} on LLM in the last hour."
+
+      - alert: LLMDailyCostExceeded
+        expr: |
+          sum(increase(llm_cost_usd_total{}[24h])) by (tenant_id) > 500
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM daily cost threshold exceeded"
+          description: "Tenant {{ $labels.tenant_id }} spent ${{ $value }} today, investigate for runaway usage."
+
+  # ── Queue Health ──────────────────────────────────────────────────────────────
+  - name: queue.health
+    rules:
+      - alert: RabbitMQQueueDepthHigh
+        expr: |
+          rabbitmq_queue_messages{queue="call.analytics"} > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RabbitMQ call.analytics queue backlog high"
+          description: "Queue depth is {{ $value }} messages. KEDA should scale pods or investigate consumers."
+
+  # ── Outbox Relay ─────────────────────────────────────────────────────────────
+  - name: outbox
+    rules:
+      - alert: OutboxRelayBacklog
+        expr: |
+          outbox_pending_events_total{} > 500
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transactional outbox relay has a large backlog"
+          description: "{{ $value }} events pending. Check relay worker and message broker health."
+
+  # ── Infrastructure ────────────────────────────────────────────────────────────
+  - name: infrastructure
+    rules:
+      - alert: PodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total{namespace="hr-voice-agent"}[15m]) * 60 * 15 > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod {{ $labels.pod }} is crash-looping"
+          description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in 15m."
+
+      - alert: PersistentVolumeUsageHigh
+        expr: |
+          kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PVC usage above 85% for {{ $labels.persistentvolumeclaim }}"

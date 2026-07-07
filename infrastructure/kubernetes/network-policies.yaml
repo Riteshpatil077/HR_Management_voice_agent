@@ -1,0 +1,142 @@
+---
+# ============================================================================
+# Network Policies — Zero-trust intra-cluster communication
+# Default-deny all ingress/egress; allow only explicit service paths
+# ============================================================================
+
+# --- Default deny all ingress/egress within the namespace ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: hr-voice-agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# --- Allow DNS egress (port 53) for all pods ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: hr-voice-agent
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# --- Voice Service: Allow ingress from Kong Gateway and internal services ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: voice-service-ingress
+  namespace: hr-voice-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: voice-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from Kong API Gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kong
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Allow from other internal services (e.g., hr-service triggering a call)
+    - from:
+        - podSelector:
+            matchLabels:
+              part-of: hr-voice-agent
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# --- Voice Service: Allow egress to external providers and internal DB/Redis ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: voice-service-egress
+  namespace: hr-voice-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: voice-service
+  policyTypes:
+    - Egress
+  egress:
+    # Internal: PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Internal: Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Internal: RabbitMQ
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+    # Internal: Vault
+    - to:
+        - podSelector:
+            matchLabels:
+              app: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+    # External: HTTPS (to OpenAI, Deepgram, ElevenLabs, Exotel, etc.)
+    - ports:
+        - protocol: TCP
+          port: 443
+---
+# --- HR Service Network Policies (Ingress from Kong + internal) ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hr-service-ingress
+  namespace: hr-voice-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: hr-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kong
+      ports:
+        - protocol: TCP
+          port: 8000
+    - from:
+        - podSelector:
+            matchLabels:
+              part-of: hr-voice-agent
+      ports:
+        - protocol: TCP
+          port: 8000

@@ -1,0 +1,118 @@
+---
+# ============================================================================
+# Kong API Gateway — Declarative Configuration (DB-less mode)
+# Routes: Voice, HR, Interview, Onboarding Services
+# Plugins: OIDC Auth, Rate Limiting, Correlation-ID, Prometheus metrics, HTTPS
+# ============================================================================
+_format_version: "3.0"
+_transform: true
+
+services:
+  # ── Voice Service ─────────────────────────────────────────────────────────
+  - name: voice-service
+    url: http://voice-service.hr-voice-agent.svc.cluster.local:80
+    connect_timeout: 5000
+    read_timeout: 60000
+    write_timeout: 60000
+    routes:
+      - name: voice-api
+        paths:
+          - /v1/voice
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+        strip_path: false
+      - name: voice-websocket
+        paths:
+          - /v1/voice/stream
+        protocols:
+          - wss
+          - ws
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 60
+          hour: 1000
+          policy: redis
+          redis_host: redis.hr-voice-agent.svc.cluster.local
+          redis_port: 6379
+          fault_tolerant: true
+      - name: correlation-id
+        config:
+          header_name: X-Correlation-ID
+          generator: uuid
+          echo_downstream: true
+      - name: prometheus
+        config:
+          status_code_metrics: true
+          latency_metrics: true
+          bandwidth_metrics: true
+
+  # ── HR Service ────────────────────────────────────────────────────────────
+  - name: hr-service
+    url: http://hr-service.hr-voice-agent.svc.cluster.local:80
+    connect_timeout: 5000
+    read_timeout: 30000
+    write_timeout: 30000
+    routes:
+      - name: hr-api
+        paths:
+          - /v1/hr
+        methods: [GET, POST, PUT, DELETE, PATCH]
+        strip_path: false
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 120
+          hour: 3000
+          policy: redis
+          redis_host: redis.hr-voice-agent.svc.cluster.local
+          redis_port: 6379
+
+  # ── Interview Service ─────────────────────────────────────────────────────
+  - name: interview-service
+    url: http://interview-service.hr-voice-agent.svc.cluster.local:80
+    routes:
+      - name: interview-api
+        paths: [/v1/interviews]
+        methods: [GET, POST, PUT, DELETE, PATCH]
+        strip_path: false
+
+  # ── Onboarding Service ────────────────────────────────────────────────────
+  - name: onboarding-service
+    url: http://onboarding-service.hr-voice-agent.svc.cluster.local:80
+    routes:
+      - name: onboarding-api
+        paths: [/v1/onboarding]
+        methods: [GET, POST, PUT, DELETE, PATCH]
+        strip_path: false
+
+# ── Global Plugins ────────────────────────────────────────────────────────────
+plugins:
+  # JWT Validation (RS256) — validates token before hitting any service
+  - name: jwt
+    config:
+      key_claim_name: kid
+      claims_to_verify: [exp]
+      header_names: [authorization]
+
+  # HTTPS only — reject plain HTTP
+  - name: request-termination
+    config:
+      status_code: 426
+      message: "HTTPS required"
+    enabled: false  # Enable via Ingress TLS termination instead
+
+  # Prometheus global metrics
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      upstream_health_metrics: true
+
+  # Bot detection
+  - name: bot-detection
+    config:
+      deny: [bot, spider]

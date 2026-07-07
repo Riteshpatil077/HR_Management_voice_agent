@@ -1,0 +1,117 @@
+name: Deploy — Staging
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy"
+        required: false
+        default: "latest"
+
+env:
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER: hr-voice-agent-staging
+  NAMESPACE: hr-voice-agent
+  HELM_RELEASE: hr-voice-agent
+
+jobs:
+  deploy-staging:
+    name: Helm Deploy to Staging
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.api.yourdomain.com
+    permissions:
+      id-token: write     # OIDC for AWS IRSA
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STAGING_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.14"
+
+      - name: Add Helm dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo add kedacore https://kedacore.github.io/charts
+          helm repo update
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.image_tag || github.sha }}"
+          echo "image_tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Helm upgrade (staging)
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./infrastructure/helm \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
+            --values infrastructure/helm/values.yaml \
+            --values infrastructure/helm/values-staging.yaml \
+            --set global.imageTag=${{ steps.tag.outputs.image_tag }} \
+            --set global.environment=staging \
+            --timeout 10m \
+            --wait \
+            --atomic
+
+      - name: Verify deployment rollout
+        run: |
+          for svc in voice-service hr-service interview-service onboarding-service; do
+            kubectl rollout status deployment/$svc \
+              -n ${{ env.NAMESPACE }} \
+              --timeout=5m
+          done
+
+      - name: Run smoke tests against staging
+        run: |
+          chmod +x scripts/smoke_test.sh
+          ./scripts/smoke_test.sh https://staging.api.yourdomain.com
+        env:
+          SMOKE_TEST_JWT: ${{ secrets.STAGING_SMOKE_TEST_JWT }}
+
+      - name: Notify Slack on success
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "✅ Staging deploy succeeded — `${{ steps.tag.outputs.image_tag }}` by @${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "::error:: Deployment failed. Rolling back..."
+          helm rollback ${{ env.HELM_RELEASE }} --namespace ${{ env.NAMESPACE }}
+          
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "🚨 Staging deploy FAILED — rolled back. Tag: `${{ steps.tag.outputs.image_tag }}` by @${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}

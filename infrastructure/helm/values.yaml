@@ -1,0 +1,164 @@
+# ============================================================================
+# Helm Values — HR Voice Agent Platform
+# Override these per environment (values-staging.yaml, values-production.yaml)
+# ============================================================================
+
+# -- Global settings ----------------------------------------------------------
+global:
+  imageRegistry: "ghcr.io/your-org/hr-voice-agent"
+  imageTag: "3.0.0"
+  imagePullPolicy: Always
+  environment: production
+
+# -- Voice Service ------------------------------------------------------------
+voiceService:
+  enabled: true
+  replicaCount: 3
+  image:
+    name: voice-service
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 50
+  ingress:
+    enabled: true
+    host: "api.yourdomain.com"
+    path: "/v1/voice"
+  serviceAccount:
+    irsaRoleArn: "arn:aws:iam::ACCOUNT_ID:role/hr-voice-agent-voice-service"
+
+# -- HR Service ---------------------------------------------------------------
+hrService:
+  enabled: true
+  replicaCount: 2
+  image:
+    name: hr-service
+  resources:
+    requests:
+      cpu: "150m"
+      memory: "192Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+  serviceAccount:
+    irsaRoleArn: "arn:aws:iam::ACCOUNT_ID:role/hr-voice-agent-hr-service"
+
+# -- Interview Service --------------------------------------------------------
+interviewService:
+  enabled: true
+  replicaCount: 2
+  image:
+    name: interview-service
+  resources:
+    requests:
+      cpu: "150m"
+      memory: "192Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 15
+
+# -- Onboarding Service -------------------------------------------------------
+onboardingService:
+  enabled: true
+  replicaCount: 2
+  image:
+    name: onboarding-service
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+
+# -- Kong API Gateway ---------------------------------------------------------
+kong:
+  enabled: true
+  replicaCount: 2
+  proxy:
+    tls:
+      enabled: true
+
+# -- PostgreSQL (Bitnami) -----------------------------------------------------
+postgresql:
+  enabled: true
+  auth:
+    database: hrvoice
+    username: hrvoice
+    existingSecret: postgres-secret
+  primary:
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+    persistence:
+      size: 50Gi
+      storageClass: gp3
+  readReplicas:
+    replicaCount: 2
+
+# -- Redis (Bitnami) ----------------------------------------------------------
+redis:
+  enabled: true
+  auth:
+    existingSecret: redis-secret
+  master:
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+  sentinel:
+    enabled: true
+    replicaCount: 3
+
+# -- RabbitMQ (Bitnami) -------------------------------------------------------
+rabbitmq:
+  enabled: true
+  auth:
+    existingPasswordSecret: rabbitmq-secret
+  replicaCount: 3
+  persistence:
+    size: 10Gi
+
+# -- Vault (HashiCorp) --------------------------------------------------------
+vault:
+  enabled: true
+  server:
+    ha:
+      enabled: true
+      replicas: 3
+    dataStorage:
+      size: 10Gi
+      storageClass: gp3
+    auditStorage:
+      enabled: true
+      size: 5Gi
+
+# -- KEDA ---------------------------------------------------------------------
+keda:
+  enabled: true

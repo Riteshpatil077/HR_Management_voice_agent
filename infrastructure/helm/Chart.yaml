@@ -1,0 +1,43 @@
+apiVersion: v2
+name: hr-voice-agent
+description: |
+  Enterprise HR Voice Agent Platform — Helm Chart
+  Deploys all microservices, supporting infrastructure, and networking.
+type: application
+version: 3.0.0
+appVersion: "3.0.0"
+
+keywords:
+  - hr
+  - voice-agent
+  - ai
+  - nlp
+  - enterprise
+
+home: https://github.com/your-org/hr-voice-agent
+
+maintainers:
+  - name: Platform Engineering
+    email: platform@yourcompany.com
+
+dependencies:
+  - name: postgresql
+    version: "13.2.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.4.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+  - name: rabbitmq
+    version: "12.5.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: rabbitmq.enabled
+  - name: vault
+    version: "0.27.0"
+    repository: "https://helm.releases.hashicorp.com"
+    condition: vault.enabled
+  - name: keda
+    version: "2.13.0"
+    repository: "https://kedacore.github.io/charts"
+    condition: keda.enabled

@@ -1,0 +1,167 @@
+---
+# ============================================================================
+# Voice Service — Kubernetes Deployment
+# Hardened, production-ready with: security contexts, probes, anti-affinity
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voice-service
+  namespace: hr-voice-agent
+  labels:
+    app: voice-service
+    app.kubernetes.io/name: voice-service
+    app.kubernetes.io/part-of: hr-voice-agent
+    app.kubernetes.io/version: "3.0.0"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: voice-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0          # Zero-downtime rolling update
+  template:
+    metadata:
+      labels:
+        app: voice-service
+        part-of: hr-voice-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: voice-service
+
+      # ── Anti-Affinity — spread across AZs ─────────────────────────────────
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values: [voice-service]
+              topologyKey: topology.kubernetes.io/zone
+
+      # ── Topology Spread Constraints ─────────────────────────────────────
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: voice-service
+
+      # ── Init Container — wait for DB and Redis to be ready ──────────────
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done']
+        - name: wait-for-redis
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z redis 6379; do echo waiting for redis; sleep 2; done']
+
+      containers:
+        - name: voice-service
+          image: ghcr.io/your-org/hr-voice-agent/voice-service:3.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+
+          # ── Environment ─────────────────────────────────────────────────
+          env:
+            - name: APP_ENV
+              value: production
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: VAULT_ADDR
+              value: "http://vault:8200"
+            - name: VAULT_ROLE
+              value: "voice-service"
+          envFrom:
+            - configMapRef:
+                name: hr-voice-agent-config
+            - secretRef:
+                name: hr-voice-agent-secrets
+
+          # ── Probes ───────────────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+
+          # ── Resources ────────────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+
+          # ── Security Context ─────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+
+          # ── Volume Mounts ─────────────────────────────────────────────────
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: jwt-keys
+              mountPath: /run/secrets
+              readOnly: true
+
+      # ── Pod Security Context ───────────────────────────────────────────────
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+
+      # ── Volumes ────────────────────────────────────────────────────────────
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: jwt-keys
+          secret:
+            secretName: jwt-keys
+            defaultMode: 0400
+
+      # ── Termination ────────────────────────────────────────────────────────
+      terminationGracePeriodSeconds: 60
+      restartPolicy: Always

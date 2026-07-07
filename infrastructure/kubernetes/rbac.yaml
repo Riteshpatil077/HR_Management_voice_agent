@@ -1,0 +1,78 @@
+---
+# ============================================================================
+# RBAC — ServiceAccounts, Roles, ClusterRoles
+# Principle of Least Privilege for each microservice
+# ============================================================================
+
+# --- ServiceAccount per microservice ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: voice-service
+  namespace: hr-voice-agent
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/hr-voice-agent-voice-service"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hr-service
+  namespace: hr-voice-agent
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/hr-voice-agent-hr-service"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: interview-service
+  namespace: hr-voice-agent
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/hr-voice-agent-interview-service"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: onboarding-service
+  namespace: hr-voice-agent
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/hr-voice-agent-onboarding-service"
+---
+# Role — ConfigMap read-only for all services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-reader
+  namespace: hr-voice-agent
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+# RoleBindings — bind configmap-reader to each service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: voice-service-configmap-reader
+  namespace: hr-voice-agent
+subjects:
+  - kind: ServiceAccount
+    name: voice-service
+    namespace: hr-voice-agent
+roleRef:
+  kind: Role
+  name: configmap-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hr-service-configmap-reader
+  namespace: hr-voice-agent
+subjects:
+  - kind: ServiceAccount
+    name: hr-service
+    namespace: hr-voice-agent
+roleRef:
+  kind: Role
+  name: configmap-reader
+  apiGroup: rbac.authorization.k8s.io

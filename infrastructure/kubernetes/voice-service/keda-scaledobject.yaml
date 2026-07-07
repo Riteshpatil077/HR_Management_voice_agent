@@ -1,0 +1,61 @@
+---
+# ============================================================================
+# Voice Service — KEDA ScaledObject
+# Event-driven autoscaling based on RabbitMQ queue depth
+# Scales from 3 → 50 replicas in response to queue backlog
+# ============================================================================
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: voice-service-scaledobject
+  namespace: hr-voice-agent
+spec:
+  scaleTargetRef:
+    name: voice-service
+  pollingInterval: 15          # Check RabbitMQ every 15 seconds
+  cooldownPeriod: 60           # Wait 60s before scaling down after burst
+  minReplicaCount: 3
+  maxReplicaCount: 50
+  advanced:
+    restoreToOriginalReplicaCount: true
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 5
+              periodSeconds: 30
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Percent
+              value: 10
+              periodSeconds: 60
+  triggers:
+    # Scale on RabbitMQ queue depth
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: call.analytics
+        mode: QueueLength
+        value: "10"             # 1 replica per 10 messages in queue
+      authenticationRef:
+        name: rabbitmq-trigger-auth
+    # Also keep a CPU safety floor
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+---
+# TriggerAuthentication — reference the RabbitMQ credentials secret
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq-trigger-auth
+  namespace: hr-voice-agent
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: rabbitmq-secret
+      key: AMQP_URL

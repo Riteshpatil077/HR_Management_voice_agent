@@ -1,0 +1,50 @@
+---
+# ============================================================================
+# Kubernetes Namespace — HR Voice Agent Platform
+# Isolated namespace with resource quotas and LimitRanges
+# ============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hr-voice-agent
+  labels:
+    app.kubernetes.io/part-of: hr-voice-agent
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# Resource Quota — prevent noisy-neighbour starvation
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: hr-voice-agent-quota
+  namespace: hr-voice-agent
+spec:
+  hard:
+    requests.cpu: "40"
+    requests.memory: 80Gi
+    limits.cpu: "80"
+    limits.memory: 160Gi
+    pods: "200"
+    services: "50"
+    persistentvolumeclaims: "20"
+---
+# LimitRange — default requests/limits for containers that don't specify them
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: hr-voice-agent-limits
+  namespace: hr-voice-agent
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      max:
+        cpu: "4"
+        memory: "8Gi"

@@ -1,0 +1,83 @@
+{{/*
+============================================================================
+deployment.yaml — Generic Deployment template
+Renders a Deployment for each enabled microservice
+============================================================================
+*/}}
+
+{{- range $key, $svc := dict
+  "voice-service"       .Values.voiceService
+  "hr-service"          .Values.hrService
+  "interview-service"   .Values.interviewService
+  "onboarding-service"  .Values.onboardingService
+}}
+{{- if $svc.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $key }}
+  namespace: hr-voice-agent
+  labels:
+    {{- include "hr-voice-agent.labels" $ | nindent 4 }}
+    app: {{ $key }}
+spec:
+  replicas: {{ $svc.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ $key }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: {{ $key }}
+        part-of: hr-voice-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: {{ $key }}
+      securityContext:
+        {{- include "hr-voice-agent.podSecurityContext" $ | nindent 8 }}
+      containers:
+        - name: {{ $key }}
+          image: {{ $.Values.global.imageRegistry }}/{{ $svc.image.name }}:{{ $.Values.global.imageTag }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: APP_ENV
+              value: {{ $.Values.global.environment }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: VAULT_ADDR
+              value: "http://vault:8200"
+            - name: VAULT_ROLE
+              value: {{ $key }}
+          envFrom:
+            - configMapRef:
+                name: hr-voice-agent-config
+          {{- include "hr-voice-agent.probes" $ | nindent 10 }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          securityContext:
+            {{- include "hr-voice-agent.securityContext" $ | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 60
+{{- end }}
+{{- end }}
