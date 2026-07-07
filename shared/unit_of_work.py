@@ -95,6 +95,27 @@ def create_engines() -> tuple[AsyncEngine, AsyncEngine]:
     return _write_engine, _read_engine
 
 
+async def create_db_tables() -> None:
+    """
+    Auto-create all database tables on startup.
+
+    Uses SQLAlchemy's MetaData.create_all() which is idempotent —
+    it only creates tables that don't already exist.
+    This is sufficient for local development.
+    For production, use Alembic migrations instead.
+    """
+    if _write_engine is None:
+        raise RuntimeError("Engines must be created before calling create_db_tables()")
+
+    # Import all ORM models so SQLAlchemy's metadata is fully populated
+    from shared.db_models import Base  # noqa: F401 — import for side effects
+
+    async with _write_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    logger.info("database_tables_created_or_verified")
+
+
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     """Return the write session factory (raises if not initialized)."""
     if _session_factory is None:

@@ -21,7 +21,7 @@ from shared.middleware import (
 )
 from shared.problem_details import unhandled_exception_handler
 from shared.settings import get_settings
-from shared.unit_of_work import create_engines, dispose_engines
+from shared.unit_of_work import create_engines, create_db_tables, dispose_engines
 from shared.cache import close_redis
 from shared.queue import get_queue_client
 from shared.outbox import OutboxRelayWorker
@@ -36,8 +36,9 @@ async def lifespan(app: FastAPI):
     """Lifecycle events for the Interview Service."""
     logger.info("interview_service_starting", version=settings.app_version)
     
-    # Initialize Databases
+    # Initialize Databases & auto-create tables
     write_engine, read_engine = create_engines()
+    await create_db_tables()
     from shared.unit_of_work import get_session_factory
     session_factory = get_session_factory()
     
@@ -81,7 +82,9 @@ app.add_middleware(TenantMiddleware)
 app.add_middleware(CorrelationIDMiddleware)
 
 # Routers
-app.include_router(interview_router)
+# app.include_router(interview_router)  # Disable old complex router for local dev
+from services.interview_service.api.interviews_router import router as interviews_router
+app.include_router(interviews_router)
 
 @app.get("/health", tags=["System"])
 async def health_check() -> JSONResponse:

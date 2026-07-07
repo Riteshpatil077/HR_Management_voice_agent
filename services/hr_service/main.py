@@ -21,7 +21,7 @@ from shared.middleware import (
 )
 from shared.problem_details import unhandled_exception_handler
 from shared.settings import get_settings
-from shared.unit_of_work import create_engines, dispose_engines
+from shared.unit_of_work import create_engines, create_db_tables, dispose_engines
 from shared.cache import close_redis
 from shared.queue import get_queue_client
 from shared.outbox import OutboxRelayWorker
@@ -36,8 +36,9 @@ async def lifespan(app: FastAPI):
     """Lifecycle events for the HR Service."""
     logger.info("hr_service_starting", version=settings.app_version)
     
-    # Initialize Databases
+    # Initialize Databases & auto-create tables
     write_engine, read_engine = create_engines()
+    await create_db_tables()
     from shared.unit_of_work import get_session_factory
     session_factory = get_session_factory()
     
@@ -82,6 +83,9 @@ app.add_middleware(CorrelationIDMiddleware)
 
 # Routers
 app.include_router(hr_router)
+
+from services.hr_service.api.candidates_router import router as candidates_router
+app.include_router(candidates_router)
 
 @app.get("/health", tags=["System"])
 async def health_check() -> JSONResponse:

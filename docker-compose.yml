@@ -467,6 +467,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    volumes:
+      - ./services/hr_service:/app/services/hr_service
+      - ./shared:/app/shared
 
   interview-service:
     <<: *service-defaults
@@ -491,6 +494,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    volumes:
+      - ./services/interview_service:/app/services/interview_service
+      - ./shared:/app/shared
 
   onboarding-service:
     <<: *service-defaults
@@ -515,6 +521,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    volumes:
+      - ./services/onboarding_service:/app/services/onboarding_service
+      - ./shared:/app/shared
 
   notification-service:
     <<: *service-defaults

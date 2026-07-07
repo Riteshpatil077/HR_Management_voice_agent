@@ -238,7 +238,7 @@ def require_roles(*required_roles: str) -> Any:
             )
         return user
 
-    return Depends(_check_roles)
+    return _check_roles
 
 
 async def get_optional_user(
